@@ -1601,7 +1601,8 @@ async function submitFromSheet() {
         criterios:c.criterios, score:c._pct||0, nivel:c._nivel, observaciones:c.obs,
         timerStart: platilloTimers[c.id]?.start?.toISOString() || null,
         timerEnd:   platilloTimers[c.id]?.end?.toISOString()   || null,
-        evidence:(c.evidence||[]).map(e=>({id:e.id,base64:e.base64,mimeType:e.mimeType,sizeBytes:e.sizeBytes,capturedAt:e.capturedAt,gps:e.gps,gpsVerified:e.gpsVerified}))
+        evidence:(c.evidence||[]).map(e=>({id:e.id,base64:e.base64,mimeType:e.mimeType,sizeBytes:e.sizeBytes,
+          capturedAt:e.capturedAt||null,gps:e.gps||null,gpsVerified:e.gpsVerified||falseAt,gps:e.gps,gpsVerified:e.gpsVerified}))
       }))
     };
   } else {
@@ -1610,7 +1611,7 @@ async function submitFromSheet() {
     payload = {
       tipo:'salon', sessionToken:TOKEN, submittedAt:new Date().toISOString(), gpsAtSubmission:GPS,
       establecimiento: document.getElementById('s-est-m').value.trim(),
-      auditor:         '',
+      auditor:         auditor,
       fecha:           new Date().toISOString().split('T')[0],
       servicio:        document.getElementById('s-turno-m').value,
       auditorFirma: auditor, chefFirma: document.getElementById('sheet-fc').value.trim(),
@@ -1778,6 +1779,8 @@ function enviarReporteWA(payload, auditId, score) {
   try {
     const op      = OPERATOR || {};
     const nivel   = score >= 85 ? '🟢 EXCELENTE' : score >= 70 ? '🟡 BUENO' : score >= 55 ? '🟠 REGULAR' : score >= 40 ? '🔴 DEFICIENTE' : '🚨 CRÍTICO';
+    // Alerta especial si score < 60
+    const alertaScore = score < 60 ? '\n⚠️ *ALERTA: SCORE CRÍTICO — REQUIERE ATENCIÓN INMEDIATA*' : '';
     const tipo    = (payload.tipo || 'alimentos').toUpperCase();
     const items   = payload.items || [];
     const time    = new Date().toLocaleString('es-MX', {timeZone:'America/Mexico_City'});
@@ -1791,6 +1794,7 @@ function enviarReporteWA(payload, auditId, score) {
     const msg = [
       `📋 *EVALUACIÓN DMZ AUDIT*`,
       `${nivel} — ${score}/100`,
+      alertaScore,
       ``,
       `🏢 *${payload.establecimiento || '—'}*`,
       `👤 Auditor: ${op.full_name || payload.auditor || '—'}`,
@@ -1816,6 +1820,52 @@ function enviarReporteWA(payload, auditId, score) {
     console.warn('WA report error:', e);
   }
 }
+
+
+/* ══ AUTO-LOGOUT POR INACTIVIDAD (30 min) ══ */
+(function initAutoLogout() {
+  let timer;
+  const TIMEOUT = 30 * 60 * 1000; // 30 minutos
+
+  function resetTimer() {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      // Mostrar aviso antes de cerrar sesión
+      const div = document.createElement('div');
+      div.style.cssText = `position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+        background:#1A1917;border:2px solid var(--gold);padding:24px 28px;z-index:99999;
+        text-align:center;font-family:'Morl',sans-serif;border-radius:4px;
+        box-shadow:0 8px 32px rgba(0,0,0,.6);width:280px`;
+      div.innerHTML = `
+        <div style="font-size:10px;letter-spacing:3px;color:var(--gold);text-transform:uppercase;margin-bottom:12px">Sesión inactiva</div>
+        <div style="font-size:14px;color:rgba(250,250,247,.8);margin-bottom:16px">Tu sesión se cerrará por inactividad</div>
+        <button onclick="this.parentElement.remove();resetInactivityTimer();" style="
+          background:var(--gold);border:none;color:#2C2A24;padding:10px 24px;
+          font-family:'Morl',sans-serif;font-size:12px;font-weight:700;
+          letter-spacing:1px;cursor:pointer;border-radius:2px;width:100%">
+          CONTINUAR SESIÓN
+        </button>`;
+      document.body.appendChild(div);
+
+      // Si no responde en 60 segundos → logout automático
+      setTimeout(() => {
+        if (document.body.contains(div)) {
+          div.remove();
+          doLogout();
+        }
+      }, 60000);
+    }, TIMEOUT);
+  }
+
+  window.resetInactivityTimer = resetTimer;
+
+  // Eventos que reinician el timer
+  ['click','touchstart','keydown','scroll','mousemove'].forEach(ev =>
+    document.addEventListener(ev, resetTimer, { passive: true })
+  );
+
+  resetTimer();
+})();
 
 /* ── REPORTE DE ERROR POR WHATSAPP ── */
 let lastError = null;
