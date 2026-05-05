@@ -412,20 +412,24 @@ body { background:var(--bg); font-family:'Morl',sans-serif; color:var(--text); f
 /* Estrellas grandes para touch */
 .crit-block { margin-bottom: 10px; }
 .crit-name { font-size:14px; letter-spacing: 1px; color: var(--text3); text-transform: uppercase; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center; }
-.stars-row { display: flex; gap: 6px; }
-.star-touch {
-  font-size: 34px;
-  cursor: pointer;
-  color: var(--border);
-  -webkit-user-select: none;
-  user-select: none;
-  line-height: 1;
-  padding: 4px;
-  transition: color .1s, transform .1s;
+/* ── RATING SEGMENTADO 1-5 ── */
+.seg-rating { display: flex; border-radius: 3px; overflow: hidden; border: 1px solid rgba(255,255,255,.08); }
+.seg-btn-r {
+  flex: 1; padding: 12px 0; text-align: center;
+  font-size: 16px; font-weight: 800; cursor: pointer;
+  transition: all .12s; color: rgba(250,250,247,.25);
+  background: rgba(255,255,255,.03);
+  border-right: 1px solid rgba(255,255,255,.06);
+  -webkit-user-select: none; user-select: none;
   touch-action: manipulation;
 }
-.star-touch:active { transform: scale(1.3); }
-.star-touch.on { color: var(--gold); }
+.seg-btn-r:last-child { border-right: none; }
+.seg-btn-r:active { opacity: .7; }
+.seg-btn-r.v1.sel { background: #B83232; color: #fff; }
+.seg-btn-r.v2.sel { background: #C06020; color: #fff; }
+.seg-btn-r.v3.sel { background: #A07820; color: #fff; }
+.seg-btn-r.v4.sel { background: #2E7D52; color: #fff; }
+.seg-btn-r.v5.sel { background: #1B5E38; color: #fff; }
 
 /* Botón cámara */
 .btn-camera {
@@ -1276,8 +1280,8 @@ function addCardM() {
         <span>${c.label}</span>
         <span id="cs-${id}-${c.key}" style="font-family:'Morl',sans-serif;font-weight:700;font-size:15px;color:var(--text3)">—</span>
       </div>
-      <div class="stars-row">
-        ${[1,2,3,4,5].map(i=>`<span class="star-touch" onclick="setStarM('${id}','${c.key}',${i})">★</span>`).join('')}
+      <div class="seg-rating">
+        ${[1,2,3,4,5].map(i=>`<div class="seg-btn-r v${i}" onclick="setStarM('${id}','${c.key}',${i})">${i}</div>`).join('')}
       </div>
     </div>`).join('');
 
@@ -1382,7 +1386,7 @@ function setStarM(id, crit, val) {
   d.criterios[crit] = val;
   const card = document.getElementById(id);
   const block = card.querySelector(`.crit-block[data-crit="${crit}"]`);
-  if (block) block.querySelectorAll('.star-touch').forEach((s,i) => s.classList.toggle('on', i<val));
+  if (block) block.querySelectorAll('.seg-btn-r').forEach((s,i) => s.classList.toggle('sel', i+1===val));
   const sc = document.getElementById(`cs-${id}-${crit}`); if(sc) sc.textContent = val;
   // Marcar hora de fin en la primera calificación completa
   const allFilled = Object.values(d.criterios).every(v=>v>0);
