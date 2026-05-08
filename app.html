@@ -1642,6 +1642,7 @@ async function submitFromSheet() {
     const result = await res.json();
     if (res.ok && result.success) {
       showSheetStatus('success', `✅ Enviada — ${result.auditId}`);
+      clearDraft(); // Limpiar borrador al enviar exitosamente
 
       // Enviar reporte WA al administrador
       enviarReporteWA(payload, result.auditId, avgScore);
@@ -1870,6 +1871,215 @@ function enviarReporteWA(payload, auditId, score) {
 
   resetTimer();
 })();
+
+
+/* ══ AUTO-SAVE — Guardado automático local ══ */
+const DMZ_SAVE_KEY = 'dmz_eval_draft';
+
+function autoSave() {
+  try {
+    const draft = {
+      ts: Date.now(),
+      tipo: window.DMZ_CURRENT_VIEW || 'alimentos',
+      // Campos del formulario
+      establecimiento: document.getElementById('s-est-m')?.value || '',
+      mesa: document.getElementById('s-mesa-m')?.value || '',
+      mesero: document.getElementById('s-mesero-m')?.value || '',
+      // Estado de las tarjetas de alimentos
+      counterM,
+      cardsM: cardsM.map(card => ({
+        id: card.id, num: card.num, nombre: card.nombre,
+        categoria: card.categoria, obs: card.obs,
+        criterios: { ...card.criterios },
+        _pct: card._pct, _nivel: card._nivel,
+        // Fotos SIN base64 para no saturar localStorage — solo metadatos
+        evidenceCount: (card.evidence||[]).length,
+      })),
+      // Estado de salón
+      salonScoresM: JSON.parse(JSON.stringify(salonScoresM || {})),
+      // Timers
+      platilloTimers: Object.fromEntries(
+        Object.entries(platilloTimers||{}).map(([k,v]) => [k, {
+          start: v.start?.toISOString?.() || null,
+          end:   v.end?.toISOString?.()   || null,
+        }])
+      ),
+    };
+    localStorage.setItem(DMZ_SAVE_KEY, JSON.stringify(draft));
+  } catch(e) {
+    console.warn('[autosave]', e.message);
+  }
+}
+
+function clearDraft() {
+  localStorage.removeItem(DMZ_SAVE_KEY);
+}
+
+function hasDraft() {
+  const d = localStorage.getItem(DMZ_SAVE_KEY);
+  if (!d) return false;
+  const parsed = JSON.parse(d);
+  // Solo válido si tiene datos y es de las últimas 24 horas
+  return parsed.cardsM?.length > 0 && (Date.now() - parsed.ts) < 86400000;
+}
+
+function restoreDraft() {
+  try {
+    const raw = localStorage.getItem(DMZ_SAVE_KEY);
+    if (!raw) return false;
+    const draft = JSON.parse(raw);
+    if (!draft.cardsM?.length) return false;
+    if ((Date.now() - draft.ts) > 86400000) { clearDraft(); return false; }
+
+    // Restaurar campos del formulario
+    const estEl = document.getElementById('s-est-m');
+    if (estEl && draft.establecimiento) estEl.value = draft.establecimiento;
+    const mesaEl = document.getElementById('s-mesa-m');
+    if (mesaEl && draft.mesa) mesaEl.value = draft.mesa;
+    const meseroEl = document.getElementById('s-mesero-m');
+    if (meseroEl && draft.mesero) meseroEl.value = draft.mesero;
+
+    // Restaurar tarjetas de alimentos
+    if (draft.cardsM?.length) {
+      cardsM = [];
+      counterM = draft.counterM || 0;
+      document.getElementById('cards-col-m').innerHTML = '';
+
+      draft.cardsM.forEach(saved => {
+        const data = {
+          id: saved.id, num: saved.num,
+          nombre: saved.nombre || '',
+          categoria: saved.categoria || '',
+          obs: saved.obs || '',
+          criterios: saved.criterios || {},
+          evidence: [],
+          _pct: saved._pct,
+          _nivel: saved._nivel || '',
+        };
+        CRIT_M.forEach(crit => {
+          if (data.criterios[crit.key] === undefined) data.criterios[crit.key] = 0;
+        });
+        cardsM.push(data);
+
+        // Renderizar la tarjeta
+        addCardM(data);
+
+        // Restaurar criterios visualmente
+        Object.entries(data.criterios).forEach(([key, val]) => {
+          if (val > 0) {
+            const card = document.getElementById(data.id);
+            if (card) {
+              const block = card.querySelector(`.crit-block[data-crit="${key}"]`);
+              if (block) {
+                block.querySelectorAll('.seg-btn-r').forEach((s,i) => s.classList.toggle('sel', i+1===val));
+                const sc = document.getElementById(`cs-${data.id}-${key}`);
+                if (sc) sc.textContent = val;
+              }
+            }
+          }
+        });
+
+        // Restaurar nombre y categoría
+        const nameEl = document.getElementById(`pcn-${data.id}`);
+        if (nameEl && data.nombre) nameEl.textContent = data.nombre;
+        const catEl = document.getElementById(`pcc-${data.id}`);
+        if (catEl && data.categoria) catEl.textContent = data.categoria;
+        const obsEl = document.getElementById(`obs-${data.id}`);
+        if (obsEl && data.obs) obsEl.value = data.obs;
+
+        // Restaurar score badge
+        if (data._pct !== undefined) {
+          calcCardM(data);
+        }
+      });
+
+      updateFAB();
+    }
+
+    // Restaurar salón
+    if (draft.salonScoresM) {
+      Object.assign(salonScoresM, draft.salonScoresM);
+    }
+
+    return true;
+  } catch(e) {
+    console.warn('[restore]', e.message);
+    return false;
+  }
+}
+
+// Hook autosave en todas las acciones relevantes
+const _origSetStarM = window.setStarM || function(){};
+window.setStarM = function(id, crit, val) {
+  _origSetStarM(id, crit, val);
+  autoSave();
+};
+
+const _origUpdCardM = window.updCardM || function(){};
+window.updCardM = function(id, f, v) {
+  _origUpdCardM(id, f, v);
+  autoSave();
+};
+
+// También en inputs de texto — debounced
+let saveTimer;
+document.addEventListener('input', (e) => {
+  if (e.target.matches('input, textarea, select')) {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(autoSave, 800);
+  }
+}, { passive: true });
+
+// Mostrar banner de recuperación si hay borrador
+window.addEventListener('load', () => {
+  setTimeout(() => {
+    if (hasDraft()) {
+      const banner = document.createElement('div');
+      banner.id = 'draft-banner';
+      banner.style.cssText = `
+        position:fixed;bottom:calc(72px + 8px + var(--safe-bot));
+        left:12px;right:12px;
+        background:#1A1917;border:1px solid #C4922A;
+        padding:14px 16px;z-index:600;border-radius:4px;
+        box-shadow:0 8px 24px rgba(0,0,0,.5);
+        display:flex;align-items:center;justify-content:space-between;gap:12px;
+      `;
+      banner.innerHTML = `
+        <div>
+          <div style="font-size:13px;font-weight:700;color:#FAFAF7">📋 Evaluación guardada</div>
+          <div style="font-size:11px;color:rgba(250,250,247,.5);margin-top:2px">Tienes una evaluación en progreso</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-shrink:0">
+          <button onclick="recoverDraft()" style="background:#C4922A;border:none;color:#111010;font-size:11px;font-weight:700;padding:8px 14px;cursor:pointer;border-radius:2px;letter-spacing:1px">RECUPERAR</button>
+          <button onclick="discardDraft()" style="background:transparent;border:1px solid rgba(255,255,255,.15);color:rgba(250,250,247,.5);font-size:11px;padding:8px 12px;cursor:pointer;border-radius:2px">Descartar</button>
+        </div>
+      `;
+      document.body.appendChild(banner);
+    }
+  }, 1000);
+});
+
+window.recoverDraft = function() {
+  const banner = document.getElementById('draft-banner');
+  if (banner) banner.remove();
+  showView('alimentos');
+  setTimeout(() => {
+    const ok = restoreDraft();
+    if (ok) {
+      const toast = document.createElement('div');
+      toast.style.cssText = 'position:fixed;top:80px;left:50%;transform:translateX(-50%);background:#2E7D52;color:#fff;padding:10px 20px;border-radius:3px;font-size:13px;font-weight:700;z-index:700';
+      toast.textContent = '✅ Evaluación recuperada';
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 2500);
+    }
+  }, 300);
+};
+
+window.discardDraft = function() {
+  clearDraft();
+  const banner = document.getElementById('draft-banner');
+  if (banner) banner.remove();
+};
 
 /* ── REPORTE DE ERROR POR WHATSAPP ── */
 let lastError = null;
